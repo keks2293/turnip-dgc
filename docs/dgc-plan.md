@@ -1,8 +1,44 @@
 # План: DGC в turnip (GPU-путь), M2–M4
 
-Контекст и факты — `docs/dgc-analysis.md` (сокращённо «разбор»). Ветка работ:
-`starfield-dgc` (turnip-a7xx-dx12), worktree mesa: `build/mesa-rp6-dgc`
-(ветка `dgc-starfield`, стек патчей 0001–0012).
+Контекст и факты — `docs/dgc-analysis.md` (сокращённо «разбор»).
+
+**Состояние работ (24.11.2026).** Линия переехала на апстрим Mesa 27: код —
+`../mesa27-dgc` (git worktree `../mesa27-src`), ветка `dgc-27` = `origin/main`
+`fc930002fc5` (27.0.0-devel) + четыре коммита `tu/dgc`. Прежнее поколение
+(26.3.0-devel, worktree `build/mesa-rp6-dgc`, ветки `dgc-starfield`/`dgc`
+форка keks2293/mesa) остаётся как история, её коммиты в виде патчей —
+`mesa-patches/`. Сборка: `scripts/build-dgc27.sh`, артефакт `../build/out-dgc27`.
+
+Экстеншен заявляется **последним** коммитом и только под опцией driconf
+`tu_enable_device_generated_commands` (по умолчанию выключен; гасится бит в
+`supported_extensions`, общий слой mesa по нему же обнуляет features и
+properties). Причина: vkd3d-proton проверяет только
+`supportedIndirectCommandsShaderStages ⊇ ALL_GRAPHICS|COMPUTE` и не читает
+ни `VkIndirectCommandsLayoutTokenSupportInfoEXT`, ни `removedTokenIndices`, так
+что «заявлено, но токен не переводится» для него не fallback, а потерянная
+работа или `device removed`.
+
+**Номера стадий M2.x выведены из обращения.** В коммитах и в коде их больше
+нет — в апстриме нет никакой внутренней нумерации (правило
+`submittingpatches.rst`: «first line … prefixed with a module name», и серия
+должна быть buildable/functional после каждого коммита), а для читателя «M2.3»
+не значит ничего. Ниже по тексту M-метки оставлены только как исторические
+заголовки разделов; соответствие новое:
+
+| было | коммит `dgc-27` |
+|---|---|
+| M2.0 | `tu/dgc: emit GPU-written PM4 through CP_INDIRECT_BUFFER` |
+| M2.1 | `tu/dgc: add indirect commands layout and execution set objects` |
+| M2.2 | (влит в коммит транслятора — маска токенов теперь одна) |
+| M2.3 | `tu/dgc: translate command sequences into a PM4 stream on the GPU` |
+| — | `tu/dgc: advertise VK_EXT_device_generated_commands behind a driconf option` |
+
+Проверено на машине этим билдом: обычный draw (`tests/dgc-probe/probe12`,
+3/3) зелёный и при выключенном, и при включённом DGC; A/B экстеншена через
+`vulkaninfo` (нет / есть, `stages = 6`). Путь `vkCmdExecuteGeneratedCommandsEXT`
+на `dgc-27` ещё не прогонялся — пробы, которые его вызывали, потеряны вместе с
+`/tmp`; следующий шаг — `DISPATCH` (§9.9), он нужен Starfield для
+`[CONSTANT, DISPATCH]`.
 
 ## 0. Цель и рамки v1
 
