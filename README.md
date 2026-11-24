@@ -36,6 +36,14 @@ tu/dgc: advertise VK_EXT_device_generated_commands behind a driconf option
 ## Сборка
 
 ```
+scripts/build-dgc27-host.sh          # свежая настройка + сборка
+FRESH=0 scripts/build-dgc27-host.sh  # инкрементальная
+```
+
+Она же — проверка, что игра/Wine не запущены, и что `$SRC` действительно дерево
+Mesa. Внутри запускается `scripts/build-dgc27.sh` (он работает в контейнере):
+
+```
 podman run --rm \
   -v /var/home/armada/opencode/mesa27-dgc:/src:Z \
   -v /var/home/armada/opencode/dgc:/repo:Z \
@@ -47,7 +55,7 @@ podman run --rm \
 
 Правила те же, что в `../turnip-patches`: сборка только в podman, build dir и
 ccache в tmpfs (`/var` — SD-карта), `-j2`, никогда при запущенной игре.
-Инкрементальная сборка — `-e FRESH=0`. Артефакт:
+Артефакт:
 `../build/out-dgc27/{libvulkan_freedreno.so,freedreno_icd.json,SHA256SUMS}`.
 
 ## Как включить
