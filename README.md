@@ -67,10 +67,24 @@ properties, и точки входа не разрешаются через `Get
 </driconf>
 ```
 
-Для отдельного приложения — `<application name=... engine=...>` внутри
-`<device driver="turnip">`, как в `00-turnip-defaults.conf`. Для разовой
-проверки — `DRIRC_CONFIGDIR=/tmp/opencode/drirc-dgc-on` (перезадаёт весь
-каталог конфигов, системные дефолты turnip в этот момент не применяются).
+Для отдельного приложения — `<application>` или `<engine>` внутри
+`<device driver="turnip">`, как в `00-turnip-defaults.conf` (там vkd3d-ные
+квирки пишут через `engine_name_match="vkd3d"`; для одной игры точнее так):
+
+```xml
+<?xml version="1.0"?>
+<driconf>
+    <device driver="turnip">
+        <application name="Starfield" executable="Starfield.exe">
+            <option name="tu_enable_device_generated_commands" value="true" />
+        </application>
+    </device>
+</driconf>
+```
+
+Для разовой проверки — `DRIRC_CONFIGDIR=/tmp/opencode/drirc-dgc-on`
+(перезадаёт весь каталог конфигов: системные дефолты turnip в этот момент не
+применяются, так что для прогонов игры способ не годится).
 
 Проверка A/B одним и тем же `.so`:
 
