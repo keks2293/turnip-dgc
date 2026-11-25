@@ -20,7 +20,9 @@ POD="podman run --rm -v $PWD:/src:Z"
 # probe -> "vert frag comp" shaders it includes (via *_spv.h)
 shaders_for() {
    case "$1" in
-      probe0d|probe12)           echo "vs_full:vert fs_bands:frag" ;;
+      probe0d|probe12|probe13)   echo "vs_full:vert fs_bands:frag" ;;
+      probe14|probe15)             echo "cs_dgc:comp" ;;
+      probe16)                     echo "cs_dgc_pc:comp" ;;
       probe_dbg)                 echo "vs_full:vert fs_bands:frag fs_green:frag" ;;
       probe7d)                   echo "cp:comp" ;;
       probe9)                    echo "vs_ssb:vert fs_bands:frag" ;;
@@ -59,7 +61,7 @@ fi
 
 targets=("$@")
 if [ ${#targets[@]} -eq 0 ]; then
-   targets=(probe0d probe7d probe9 probe10 probe11 probe12 probe_dbg)
+   targets=(probe0d probe7d probe9 probe10 probe11 probe12 probe13 probe14 probe15 probe16 probe_dbg)
 fi
 rc=0
 for p in "${targets[@]}"; do

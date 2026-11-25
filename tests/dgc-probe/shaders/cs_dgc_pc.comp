@@ -1,0 +1,24 @@
+#version 450
+/* probe16: [PUSH_CONSTANT, DISPATCH] — сигнатура, которой vkd3d просит
+ * Starfield. Ядро считает по push-константам, чтобы было видно, доехали ли
+ * токены обоих типов: PC (значение) и DISPATCH (число групп). */
+layout(local_size_x = 1) in;
+
+layout(push_constant) uniform Pc {
+   uint magic;
+   uint scale;
+} pc;
+
+layout(set = 0, binding = 0) buffer B { uint v[]; } b;
+
+void main()
+{
+   uint i = gl_GlobalInvocationID.x;
+   b.v[i] = pc.magic + pc.scale * i;
+
+   /* Маркеры отдельными слотами: v[0..2] заняли результаты, их же и
+    * проверяем на «значение из токена, а не из vkCmdPushConstants». */
+   b.v[8] = 0xdeadbeefu;
+   b.v[9] = gl_NumWorkGroups.x;
+   b.v[10] = gl_NumWorkGroups.y;
+}

@@ -1,0 +1,13 @@
+#version 450
+/* probe14: доказать, что DISPATCH-токен действительно запускает сетку и что
+ * gl_NumWorkGroups видит грид из последовательности (а не нули). */
+layout(local_size_x = 1) in;
+
+layout(set = 0, binding = 0) buffer B { uint v[]; } b;
+
+void main()
+{
+   b.v[0] = 0xdeadbeefu;
+   b.v[1] = gl_NumWorkGroups.x;
+   b.v[2] = gl_GlobalInvocationID.x;
+}

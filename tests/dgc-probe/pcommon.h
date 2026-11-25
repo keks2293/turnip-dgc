@@ -133,15 +133,59 @@ buf_write(struct env *e, VkDeviceMemory m, const void *data, VkDeviceSize size)
    vkUnmapMemory(e->dev, m);
 }
 
+/* A host visible buffer you can hand to the GPU as an address, which is what
+ * every DGC structure that names sequences wants. Returns the device address. */
+static inline VkDeviceAddress
+bda_buffer(struct env *e, VkBuffer *b, VkDeviceMemory *m, VkDeviceSize size)
+{
+   VkBufferCreateInfo bci = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+      .size = size,
+      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+   };
+   VKCHECK(vkCreateBuffer(e->dev, &bci, NULL, b));
+   VkMemoryRequirements mr;
+   vkGetBufferMemoryRequirements(e->dev, *b, &mr);
+   VkMemoryAllocateFlagsInfo flags = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+      .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+   };
+   VkMemoryAllocateInfo mai = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+      .pNext = &flags,
+      .allocationSize = mr.size,
+      .memoryTypeIndex = find_mem_type(e, mr.memoryTypeBits,
+                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+   };
+   VKCHECK(vkAllocateMemory(e->dev, &mai, NULL, m));
+   VKCHECK(vkBindBufferMemory(e->dev, *b, *m, 0));
+
+   VkBufferDeviceAddressInfo bdai = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+      .buffer = *b,
+   };
+   return vkGetBufferDeviceAddress(e->dev, &bdai);
+}
+
+/* Optional extras for probes that need an extension: env_init() passes NULL,
+ * which creates exactly the 1.0 device every other probe uses. */
+struct env_ext {
+   VkBool32 dgc; /* VK_EXT_device_generated_commands + bufferDeviceAddress */
+};
+
 static inline void
-env_init(struct env *e, const char *name)
+env_init_ex(struct env *e, const char *name, const struct env_ext *ext)
 {
    memset(e, 0, sizeof(*e));
    e->name = name;
 
    VkApplicationInfo ai = {
       .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-      .apiVersion = VK_API_VERSION_1_0,
+      .apiVersion = (ext && ext->dgc) ? VK_API_VERSION_1_3
+                                      : VK_API_VERSION_1_0,
    };
    VkInstanceCreateInfo ici = {
       .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -176,10 +220,30 @@ env_init(struct env *e, const char *name)
       .queueCount = 1,
       .pQueuePriorities = &prio,
    };
+   static const char *dgc_exts[] = {
+      VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME,
+   };
+   VkPhysicalDeviceDeviceGeneratedCommandsFeaturesEXT dgc_feat = {
+      .sType =
+         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_FEATURES_EXT,
+      .deviceGeneratedCommands = VK_TRUE,
+   };
+   VkPhysicalDeviceVulkan12Features f12 = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+      .pNext = &dgc_feat,
+      .bufferDeviceAddress = VK_TRUE,
+   };
+   VkPhysicalDeviceFeatures2 f2 = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+      .pNext = &f12,
+   };
    VkDeviceCreateInfo dci = {
       .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+      .pNext = (ext && ext->dgc) ? &f2 : NULL,
       .queueCreateInfoCount = 1,
       .pQueueCreateInfos = &qci,
+      .enabledExtensionCount = (ext && ext->dgc) ? 1 : 0,
+      .ppEnabledExtensionNames = (ext && ext->dgc) ? dgc_exts : NULL,
    };
    VKCHECK(vkCreateDevice(e->phys, &dci, NULL, &e->dev));
    vkGetDeviceQueue(e->dev, e->qfam, 0, &e->queue);
@@ -274,6 +338,12 @@ env_init(struct env *e, const char *name)
 
    buf_create(e, &e->readbuf, &e->rmem, (VkDeviceSize)4 * W * H,
               VK_BUFFER_USAGE_TRANSFER_DST_BIT, 1);
+}
+
+static inline void
+env_init(struct env *e, const char *name)
+{
+   env_init_ex(e, name, NULL);
 }
 
 /* --- barriers ---------------------------------------------------------- */

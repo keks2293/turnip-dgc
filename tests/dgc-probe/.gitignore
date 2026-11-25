@@ -5,6 +5,10 @@ probe9
 probe10
 probe11
 probe12
+probe13
+probe14
+probe15
+probe16
 probe_dbg
 *_spv.h
 shaders/*.spv
