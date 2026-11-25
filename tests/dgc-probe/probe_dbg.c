@@ -48,7 +48,7 @@ int main(int argc, char **argv)
     env_init(&e, "probdbg");
 
     buf_create(&e, &e.vbo, &e.vmem, sizeof(verts),
-               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 0);
+               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 1);
     buf_write(&e, e.vmem, verts, sizeof(verts));
 
     const uint32_t *fss = use_green ? FS_GREEN_SPV : FS_BANDS_SPV;

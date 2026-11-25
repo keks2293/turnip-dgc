@@ -27,7 +27,7 @@ int main(void)
     env_init(&e, "probe12");
 
     buf_create(&e, &e.vbo, &e.vmem, sizeof(g_full),
-               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 0);
+               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 1);
     buf_write(&e, e.vmem, g_full, sizeof(g_full));
 
     struct stagex st[2] = {

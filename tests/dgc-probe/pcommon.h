@@ -124,6 +124,74 @@ buf_create(struct env *e, VkBuffer *b, VkDeviceMemory *m, VkDeviceSize size,
    VKCHECK(vkBindBufferMemory(e->dev, *b, *m, 0));
 }
 
+/* Препоцесс-буфер для DGC: размер диктует драйвер, а флаги использования
+ * диктует спека - адрес обязан быть из буфера с
+ * VK_BUFFER_USAGE_2_PREPROCESS_BUFFER_BIT_EXT
+ * (VUID-VkGeneratedCommandsInfoEXT-preprocessAddress-11069), а память - из
+ * memoryTypeBits, которые вернул vkGetGeneratedCommandsMemoryRequirementsEXT
+ * (-11064). Layout без токена EXECUTION_SET не имеет и execution set, поэтому
+ * pipeline для запроса идёт в pNext (VUID-...-indirectExecutionSet-11012).
+ * pMemReq передаётся параметром: pcommon.h не знает точек входа расширения. */
+static inline VkDeviceAddress
+preprocess_buffer(struct env *e,
+                  PFN_vkGetGeneratedCommandsMemoryRequirementsEXT pMemReq,
+                  VkIndirectCommandsLayoutEXT lay, VkPipeline pipe,
+                  uint32_t seq_count, VkDeviceSize *size_out, VkBuffer *buf,
+                  VkDeviceMemory *mem)
+{
+   VkGeneratedCommandsPipelineInfoEXT pinfo = {
+      .sType = VK_STRUCTURE_TYPE_GENERATED_COMMANDS_PIPELINE_INFO_EXT,
+      .pipeline = pipe,
+   };
+   VkGeneratedCommandsMemoryRequirementsInfoEXT mri = {
+      .sType = VK_STRUCTURE_TYPE_GENERATED_COMMANDS_MEMORY_REQUIREMENTS_INFO_EXT,
+      .pNext = &pinfo,
+      .indirectCommandsLayout = lay,
+      .maxSequenceCount = seq_count,
+      .maxDrawCount = seq_count,
+   };
+   VkMemoryRequirements2 mr = {.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
+   pMemReq(e->dev, &mri, &mr);
+
+   VkDeviceSize size = mr.memoryRequirements.size ? mr.memoryRequirements.size
+                                                 : 4096;
+   VkBufferCreateInfo bci = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+      .size = size,
+      .usage = VK_BUFFER_USAGE_2_PREPROCESS_BUFFER_BIT_EXT |
+               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+   };
+   VKCHECK(vkCreateBuffer(e->dev, &bci, NULL, buf));
+   VkMemoryRequirements req;
+   vkGetBufferMemoryRequirements(e->dev, *buf, &req);
+
+   /* Свойств не требуем: с CPU этот буфер не трогается, а memoryTypeBits
+    * драйвера могут указывать и на тип без HOST_VISIBLE. */
+   uint32_t bits = mr.memoryRequirements.memoryTypeBits
+                      ? mr.memoryRequirements.memoryTypeBits & req.memoryTypeBits
+                      : req.memoryTypeBits;
+   VkMemoryAllocateFlagsInfo flags = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+      .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+   };
+   VkMemoryAllocateInfo mai = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+      .pNext = &flags,
+      .allocationSize = req.size,
+      .memoryTypeIndex = find_mem_type(e, bits, 0),
+   };
+   VKCHECK(vkAllocateMemory(e->dev, &mai, NULL, mem));
+   VKCHECK(vkBindBufferMemory(e->dev, *buf, *mem, 0));
+
+   VkBufferDeviceAddressInfo bdai = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+      .buffer = *buf,
+   };
+   *size_out = size;
+   return vkGetBufferDeviceAddress(e->dev, &bdai);
+}
+
 static inline void
 buf_write(struct env *e, VkDeviceMemory m, const void *data, VkDeviceSize size)
 {
@@ -133,16 +201,14 @@ buf_write(struct env *e, VkDeviceMemory m, const void *data, VkDeviceSize size)
    vkUnmapMemory(e->dev, m);
 }
 
-/* A host visible buffer you can hand to the GPU as an address, which is what
- * every DGC structure that names sequences wants. Returns the device address. */
 static inline VkDeviceAddress
-bda_buffer(struct env *e, VkBuffer *b, VkDeviceMemory *m, VkDeviceSize size)
+bda_usage_buffer(struct env *e, VkBuffer *b, VkDeviceMemory *m,
+                 VkDeviceSize size, VkBufferUsageFlags usage)
 {
    VkBufferCreateInfo bci = {
       .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
       .size = size,
-      .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      .usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
       .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
    };
    VKCHECK(vkCreateBuffer(e->dev, &bci, NULL, b));
@@ -170,6 +236,17 @@ bda_buffer(struct env *e, VkBuffer *b, VkDeviceMemory *m, VkDeviceSize size)
    return vkGetBufferDeviceAddress(e->dev, &bdai);
 }
 
+/* A host visible buffer you can hand to the GPU as an address, which is what
+ * every DGC structure that names sequences wants. Returns the device address.
+ * The usage is whatever the extension asks of that particular address - see
+ * bda_usage_buffer() for the one that takes it. */
+static inline VkDeviceAddress
+bda_buffer(struct env *e, VkBuffer *b, VkDeviceMemory *m, VkDeviceSize size)
+{
+   return bda_usage_buffer(e, b, m, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+}
+
+
 /* Optional extras for probes that need an extension: env_init() passes NULL,
  * which creates exactly the 1.0 device every other probe uses. */
 struct env_ext {
@@ -184,6 +261,13 @@ env_init_ex(struct env *e, const char *name, const struct env_ext *ext)
 
    VkApplicationInfo ai = {
       .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+      /* Имя движка нужно не для отчётов: driconf сопоставляет с ним
+       * <engine engine_name_match="dgc-stand">, и только этим стенд получает
+       * tu_enable_device_generated_commands (~/.drirc), не включая DGC всем
+       * остальным приложениям. Без него стенд считает расширение недоступным,
+       * и это выглядело бы как регрессия драйвера. */
+      .pApplicationName = "dgc-stand",
+      .pEngineName = "dgc-stand",
       .apiVersion = (ext && ext->dgc) ? VK_API_VERSION_1_3
                                       : VK_API_VERSION_1_0,
    };

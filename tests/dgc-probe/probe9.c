@@ -31,7 +31,7 @@ int main(void)
     env_init(&e, "probe9");
 
     buf_create(&e, &e.vbo, &e.vmem, sizeof(g_full),
-               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 0);
+               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 1);
     buf_write(&e, e.vmem, g_full, sizeof(g_full));
 
     /* SSBO: host-visible, замаплен на всё время работы */
