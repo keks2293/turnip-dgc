@@ -105,8 +105,11 @@ DRIVER_LIB="$(dirname "$PATCHED_ICD")/libvulkan_freedreno.so"
 DRIVER_SHA=""
 if [ "$MODE" = patched ] && [ -r "$DRIVER_LIB" ]; then
   DRIVER_SHA="$(sha256sum "$DRIVER_LIB" | cut -c1-16)"
-  export VKD3D_SHADER_CACHE_PATH="${VKD3D_SHADER_CACHE_PATH:-$REPO/../build/vkd3d-cache/$DRIVER_SHA}"
-  mkdir -p "$VKD3D_SHADER_CACHE_PATH"
+  mkdir -p "$REPO/../build/vkd3d-cache/$DRIVER_SHA"
+  # realpath обязателен: путь с ".." посередине vkd3d превращает в
+  # Z:\...\dgc\..\build\... и «Failed to map read-only cache» — кэш не читается.
+  export VKD3D_SHADER_CACHE_PATH="${VKD3D_SHADER_CACHE_PATH:-\
+$(realpath "$REPO/../build/vkd3d-cache/$DRIVER_SHA")}"
 fi
 
 # Тег логов — имя exe, чтобы прогоны разных игр не перезаписывали друг друга.
@@ -125,29 +128,46 @@ export PROTON_LOG=1
 export WINEDEBUG="${WINEDEBUG:--all}"   # для диагностики: WINEDEBUG=+vulkan ./scripts/...
 export VK_LOADER_DEBUG="${VK_LOADER_DEBUG:-error,warn}"
 
-# Диагностические пасsthrough (dgc-plan §9.9):
+# Диагностические passthrough (dgc-plan §9.9):
 #   VKD3D_DISABLE_EXTENSIONS=VK_EXT_device_generated_commands — A/B без DGC
 #   (vkd3d device.c:202, список через запятую)
-#   VKD3D_FEATURE_LEVEL=12_0 — на голом апстриме (патч 0004 не поднят,
-#   sparseResidencyImage2D=false) vkd3d-proton считает FL из фич и Starfield
-#   не доходит до картинки; 12_0 задаётся явно
+#   VKD3D_FEATURE_LEVEL=12_0 — если vkd3d считает FL из фич и Starfield не
+#   доходит до картинки, 12_0 задаётся явно; с поднятым 0004 не нужен
 #   TU_DEBUG=dgcdump — дамп сгенерированного PM4-стрима в stderr (turnip).
 #   Осторожно: Starfield гоняет DGC каждый кадр, лог разрастается
 #   MESA_DEBUG=1 — mesa_log-вывод драйвера (в release-сборке vk_errorf
 #   дополнительно требует debug-колбэк — см. dgc-plan §9.9)
-#   DRIRC_CONFIGDIR — каталог drirc; заменяет поиск целиком, для DGC это
-#   /tmp/opencode/drirc-dgc-on с tu_enable_device_generated_commands=true
-#   (в /etc/xdg/mesa и ~/.config/mesa своих drirc нет, терять нечего)
-for name in VKD3D_DISABLE_EXTENSIONS VKD3D_FEATURE_LEVEL TU_DEBUG MESA_DEBUG \
-            DRIRC_CONFIGDIR; do
+for name in VKD3D_DISABLE_EXTENSIONS VKD3D_FEATURE_LEVEL TU_DEBUG MESA_DEBUG; do
     if [ -n "${!name:-}" ]; then export "$name"; fi
 done
+
+# driconf сюда не passthrough, и это ловушка, на которой игра уже умирала.
+# DRIRC_CONFIGDIR не дополняет поиск drirc, а заменяет его (src/util/
+# xmlconfig.c:1541: или он, или $datadir/drirc.d + SYSCONFDIR/drirc + ~/.drirc).
+# В /usr/share/drirc.d/00-turnip-defaults.conf сидит tu_enable_softfloat32 —
+# только с ним shaderDenormPreserveFloat32=true, а без него vkd3d не даёт
+# SM 6.6, и Starfield отвечает «your GPU does not meet the minimum
+# requirements» (turnip-patches: README, analysis.md §10). Прогон 25.11.2026 с
+# DRIRC_CONFIGDIR на каталог из одного файла терял и softfloat32, и сам гейт
+# DGC: файл лежал в /tmp и перезагрузку не пережил, а vkd3d честно писал
+# «Not all relevant pipeline stages are supported by EXT_dgc. Skipping».
+# DGC включён по executable в ~/.drirc — он читается в дополнение к /usr.
+if [ -n "${DRIRC_CONFIGDIR:-}" ]; then
+  echo "DRIRC_CONFIGDIR=$DRIRC_CONFIGDIR перекрывает /usr/share/drirc.d:" >&2
+  echo "без 00-turnip-defaults.conf vkd3d не получит SM 6.6, и Starfield" >&2
+  echo "откажет GPU по железу. Включай DGC в ~/.drirc, переменную убери." >&2
+  exit 1
+fi
 
 {
   echo "# date: $(date -Is)"
   echo "# mode: $MODE"
   echo "# VK_DRIVER_FILES=${VK_DRIVER_FILES:-<unset>}"
-  echo "# VKD3D_FEATURE_LEVEL=${VKD3D_FEATURE_LEVEL:-<unset>} DRIRC_CONFIGDIR=${DRIRC_CONFIGDIR:-<default>}"
+  echo "# VKD3D_FEATURE_LEVEL=${VKD3D_FEATURE_LEVEL:-<unset>}"
+  # Две вещи, без которых прогон бессмыслен, и обе читаются из drirc:
+  # DGC-гейт (он в ~/.drirc) и SM 6.6 (он в /usr/share/drirc.d, в логе это
+  # строка «Enabling support for SM 6.6»).
+  echo "# drirc: DGC gate $(grep -q tu_enable_device_generated_commands "$HOME/.drirc" 2>/dev/null && echo on || echo off), ожидание в логе: Enabling support for SM 6.6"
   [ -n "$DRIVER_SHA" ] && echo "# driver: $DRIVER_SHA  vkd3d cache: ${VKD3D_SHADER_CACHE_PATH:-<default>}"
   [ -r "$VKD3D_DLL" ] && \
     echo "# vkd3d-proton: master-сборка $(sha256sum "$VKD3D_DLL" | cut -c1-16) (native-override)" || \
