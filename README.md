@@ -30,8 +30,11 @@ tu/dgc: advertise VK_EXT_device_generated_commands behind a driconf option
 применяются.
 
 Поддерживается перевод токенов `PUSH_CONSTANT`, `SEQUENCE_INDEX`, `DRAW`,
-`DRAW_INDEXED`. Остальные (в том числе `DISPATCH`, который Starfield использует
-в `[CONSTANT, DISPATCH]`) отвергаются на `vkCreateIndirectCommandsLayoutEXT`.
+`DRAW_INDEXED`. `DISPATCH` (Starfield использует его в `[CONSTANT, DISPATCH]`)
+пока отвергается на `vkCreateIndirectCommandsLayoutEXT`: его нельзя честно
+объявить неподдержанным (нет поштучного запроса, а `COMPUTE` из стадий не
+убрать — vkd3d тогда выключит DGC целиком), поэтому его нужно реализовать.
+Цена и открытый замер — `docs/dgc-plan.md` §10.
 
 ## Сборка
 

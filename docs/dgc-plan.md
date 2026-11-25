@@ -661,4 +661,79 @@ DGC_DUMP=1 scripts/run-starfield.sh patched 600
     обычный indirect для compute (DGC остался бы для graphics);
 (b) реализовать M2.4 (DISPATCH = `CP_EXEC_CS` + count-варианты).
 
+## 10. Токены: что можно законно отвергнуть (25.11.2026)
 
+Проверено по `vk.xml` и по коду RADV/ANV — вопрос был «оставить отказ только
+для DRAW_MULTI/INDEX_BUFFER?». Сначала поправка: **`DRAW_MULTI` в EXT нет**, это
+имя NV. В `VkIndirectCommandsTokenTypeEXT` счётные токены называются
+`DRAW_COUNT` и `DRAW_INDEXED_COUNT`; набор целиком: `PUSH_CONSTANT`,
+`PUSH_DATA`, `SEQUENCE_INDEX`, `PUSH_DATA_SEQUENCE_INDEX`, `DRAW`,
+`DRAW_INDEXED`, `DRAW_COUNT`, `DRAW_INDEXED_COUNT`, `DISPATCH`,
+`INDEX_BUFFER`, `VERTEX_BUFFER`, `DRAW_MESH_TASKS`, `TRACE_RAYS2`,
+`EXECUTION_SET`.
+
+Каналов объявить «этот токен не поддерживаю» всего три, и поштучного среди
+них нет:
+
+1. `supportedIndirectCommandsShaderStages` — но грубо, по стадиям.
+2. `deviceGeneratedCommandsMultiDrawIndirectCount` — счётные токены.
+3. `deviceGeneratedCommandsTransformFeedback` / `vertexInputPushStep` —
+   XFB и `VERTEX_BUFFER`.
+
+Структуры `VkIndirectCommandsLayoutTokenSupportInfoEXT` **не существует**
+(grep по `vk.xml` пуст), а у `vkCreateIndirectCommandsLayoutEXT` в errorcodes
+только OOM: `VK_ERROR_FEATURE_NOT_PRESENT` там не пописан. То есть отказ по
+типу токена на create — вне спецификации, чем бы он ни мотивировался.
+
+Как это решают:
+
+| | RADV | ANV |
+|---|---|---|
+| DISPATCH | есть: `PKT3_DISPATCH_DIRECT` в preprocess-шейдере | есть: `COMPUTE_WALKER` / `GPGPU_WALKER` |
+| отказ по токену | нет, create падает только по OOM | нет |
+| неизвестный токен | молча игнорируется | молча игнорируется |
+| `MultiDrawIndirectCount` | по возможностям железа | `false` (честно) |
+| `TransformFeedback` | `true` без единой строки XFB-логики | `true`, то же |
+
+Вывод для turnip:
+
+* `DISPATCH` **нельзя** оставить отказом: его единственный гейт — стадия
+  `COMPUTE`, а убрать `COMPUTE` нельзя (vkd3d-proton тогда выключает DGC
+  целиком, вместе с draw-путём). Starfield'у он нужен: одна сигнатура
+  `[PUSH_CONSTANT, DISPATCH]`.
+* `DRAW_COUNT`/`DRAW_INDEXED_COUNT` — отказ законен через
+  `MultiDrawIndirectCount = false` (у нас уже `false`).
+* `DRAW_MESH_TASKS`, `TRACE_RAYS2` — законно: у turnip нет стадий MESH/TASK/RT.
+* `INDEX_BUFFER` — единственный токен без канала вообще; либо реализовать,
+  либо принять и игнорировать, как RADV/ANV.
+* `PUSH_DATA`/`PUSH_DATA_SEQUENCE_INDEX` уже переводятся как PC/SI.
+
+### 10.1. Цена DISPATCH
+
+Обычный dispatch в turnip — `CP_EXEC_CS` с `NGROUPS_X/Y/Z` в самом пакете
+(`tu_dispatch`, a6xx/a7xx), то есть та же схема, что у draw-токенов: три
+dword'а из последовательности кладутся в поля пакета. Что нужно:
+
+1. `tu_dgc.cc`: принять токен, `dwords_per_seq += 1 + 4`.
+2. NIR-транслятор: ветка `is_dispatch` — заголовок `CP_EXEC_CS` + 4 dword'а.
+3. Выдача compute-состояния перед IB без запуска сетки. Сделано: из
+   `tu_dispatch` вынесена `tu_compute_state_emit()` (порядок эмита сохранён
+   один в один), `tu_emit_compute_driver_params()` теперь возвращает IOVA
+   своего BO.
+4. `gl_NumWorkGroups`: три первых dword'а `struct ir3_driver_params_cs` —
+   это `num_work_groups_x/y/z`, поэтому грид можно записать на GPU в BO
+   параметров (`IR3_DP_CS(num_work_groups_x) == 0`).
+
+### 10.2. Открытый вопрос — что авторитетно для сетки
+
+`CP_EXEC_CS.NGROUPS_*` или `SP_CS_NDRANGE.GLOBALSIZE_*`? В реестре
+(`adreno_pm4.xml`, `a6xx.xml`) описаний нет. В обычном пути turnip пишет оба
+согласованно, а в unaligned-ветке комментарий говорит, что `SP_CS_KERNEL_GROUP_X`
+«обычно ставится пакетом» — то есть намекает на `CP_EXEC_CS`. Проверяется
+одним запуском: выдать `tu_compute_state_emit` с `blocks = {0,0,0}`, а в стриме
+`CP_EXEC_CS(2,2,2)`; если ядро исполнилось — авторитетен пакет, если нет —
+нужно патчить `NDRANGE` (и тогда глобальный размер = грид × local size, а
+local size известен на CPU).
+
+До этого замера токен остаётся отвергнутым на create, а `tu_compute_state_emit`
+живёт как самостоятельный рефакторинг (поведение не меняет).
