@@ -704,8 +704,13 @@ DGC_DUMP=1 scripts/run-starfield.sh patched 600
 * `DRAW_COUNT`/`DRAW_INDEXED_COUNT` — отказ законен через
   `MultiDrawIndirectCount = false` (у нас уже `false`).
 * `DRAW_MESH_TASKS`, `TRACE_RAYS2` — законно: у turnip нет стадий MESH/TASK/RT.
-* `INDEX_BUFFER` — единственный токен без канала вообще; либо реализовать,
-  либо принять и игнорировать, как RADV/ANV.
+* `INDEX_BUFFER` — был единственным токеном без канала отказа вообще;
+  реализован (`tu/dgc: bind index buffers from generated commands`), вместе с
+  входным режимом `DXGI_INDEX_BUFFER`, которым пользуется vkd3d.
+* `VERTEX_BUFFER` — теперь он единственный без канала: ни стадии, ни фичи, ни
+  лимита им не гейтится. Значит либо реализовать, либо не объявлять расширение:
+  vkd3d при отказе создаёт не fallback, а ошибку `CreateCommandSignature`
+  (`command.c:27407`), и подписи с `VERTEX_BUFFER_VIEW` ломаются у приложения.
 * `PUSH_DATA`/`PUSH_DATA_SEQUENCE_INDEX` уже переводятся как PC/SI.
 
 ### 10.1. Цена DISPATCH
