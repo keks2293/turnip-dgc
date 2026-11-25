@@ -27,6 +27,7 @@ shaders_for() {
       probe0d|probe12|probe13)   echo "vs_full:vert fs_bands:frag" ;;
       probe17)                   echo "vs_full:vert fs_green:frag" ;;
       probe18)                   echo "vs_full:vert fs_green:frag fs_red:frag" ;;
+      probe19)                   echo "vs_full:vert fs_green:frag vs_pc:vert" ;;
       probe14|probe15)             echo "cs_dgc:comp" ;;
       probe16)                     echo "cs_dgc_pc:comp" ;;
       probe_dbg)                 echo "vs_full:vert fs_bands:frag fs_green:frag" ;;
@@ -67,7 +68,7 @@ fi
 
 targets=("$@")
 if [ ${#targets[@]} -eq 0 ]; then
-   targets=(probe0d probe7d probe9 probe10 probe11 probe12 probe13 probe14 probe15 probe16 probe17 probe18 probe_dbg)
+   targets=(probe0d probe7d probe9 probe10 probe11 probe12 probe13 probe14 probe15 probe16 probe17 probe18 probe19 probe_dbg)
 fi
 rc=0
 for p in "${targets[@]}"; do

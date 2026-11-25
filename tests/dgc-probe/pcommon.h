@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 #include <vulkan/vulkan.h>
 
 #define W 512
@@ -522,10 +523,14 @@ struct stagex {
    uint32_t len; /* bytes */
 };
 
+/* Два входа: make_pipeline() — как его уже используют все пробы, а _ex()
+ * умеет дополнительно положить диапазон push-констант в layout пайплайна.
+ * probe19 нужен именно он: токен PUSH_CONSTANT обязан назвать диапазон,
+ * объявленный в layout, иначе create layout'а не проходит. */
 static inline VkPipeline
-make_pipeline(struct env *e, const struct stagex *st, uint32_t n,
-              VkDescriptorSetLayout *dsls, uint32_t ndsls,
-              VkPipelineLayout *out_layout)
+make_pipeline_ex(struct env *e, const struct stagex *st, uint32_t n,
+                 VkDescriptorSetLayout *dsls, uint32_t ndsls,
+                 const VkPushConstantRange *pcr, VkPipelineLayout *out_layout)
 {
    VkShaderModule mods[4] = {0};
    VkPipelineShaderStageCreateInfo ssi[4];
@@ -548,6 +553,8 @@ make_pipeline(struct env *e, const struct stagex *st, uint32_t n,
       .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
       .setLayoutCount = ndsls,
       .pSetLayouts = dsls,
+      .pushConstantRangeCount = pcr ? 1u : 0u,
+      .pPushConstantRanges = pcr,
    };
    VkPipelineLayout layout;
    VKCHECK(vkCreatePipelineLayout(e->dev, &plci, NULL, &layout));
@@ -623,6 +630,49 @@ make_pipeline(struct env *e, const struct stagex *st, uint32_t n,
    for (uint32_t i = 0; i < n; i++)
       vkDestroyShaderModule(e->dev, mods[i], NULL);
    return pipe;
+}
+
+static inline VkPipeline
+make_pipeline(struct env *e, const struct stagex *st, uint32_t n,
+              VkDescriptorSetLayout *dsls, uint32_t ndsls,
+              VkPipelineLayout *out_layout)
+{
+   return make_pipeline_ex(e, st, n, dsls, ndsls, NULL, out_layout);
+}
+
+/* --- timing ------------------------------------------------------------ */
+/* Медиана, не среднее: одно страничное нарушение или один сброс GPU сдвинут
+ * среднее из десяти замеров сильнее, чем эффект, который ищет probe19. */
+static inline uint64_t
+now_ns(void)
+{
+   struct timespec ts;
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static inline int
+cmp_u64(const void *a, const void *b)
+{
+   uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+   return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+/* Сортирует v и возвращает медиану, для пустого набора — 0. */
+static inline uint64_t
+median_u64(uint64_t *v, int n)
+{
+   if (n <= 0)
+      return 0;
+   qsort(v, (size_t)n, sizeof(*v), cmp_u64);
+   return v[n / 2];
+}
+
+/* нс -> мкс с тремя знаками после запятой, для печатаемой таблицы. */
+static inline double
+us(uint64_t ns)
+{
+   return (double)ns / 1000.0;
 }
 
 static inline VkDescriptorSet
