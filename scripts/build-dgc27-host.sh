@@ -18,7 +18,10 @@ OUT="${OUT:-/tmp/opencode/mesa27-dgc-build}"   # tmpfs: build dir
 CCACHEDIR="${CCACHEDIR:-/tmp/opencode/ccache}" # tmpfs: ccache
 HOSTOUT="${HOSTOUT:-$ROOT/build/out-dgc27}"    # artifacts on the SD card
 
-if pgrep -f 're4\.exe|wine|wineserver|Starfield' >/dev/null 2>&1; then
+# The bracket keeps this check from matching its own command line.
+if pgrep -x wineserver >/dev/null 2>&1 ||
+   pgrep -x wine >/dev/null 2>&1 ||
+   pgrep -f '[S]tarfield' >/dev/null 2>&1; then
    echo "Wine/the game is running - close it before building." >&2
    exit 1
 fi
