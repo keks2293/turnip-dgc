@@ -80,6 +80,7 @@ TS="$(date +%Y%m%d-%H%M%S)"
 RAW="$REPO/results/raw/starfield-$MODE-$TS.log"
 LOG="$REPO/results/starfield/starfield-$MODE-$TS.log"
 CURATE="$REPO/scripts/curate-game-log.sh"
+[ -r "$CURATE" ] || CURATE="$REPO/../turnip-patches/scripts/curate-game-log.sh"
 
 export STEAM_COMPAT_DATA_PATH="$PREFIX"
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="/var/home/armada/.local/share/Steam"
@@ -152,7 +153,11 @@ if [ -n "$LEFTOVER" ]; then
 fi
 
 echo "код возврата: $RC"
-"$CURATE" "$RAW" "$LOG"
+if [ -r "$CURATE" ]; then
+    "$CURATE" "$RAW" "$LOG" || echo "курация не удалась — смотрим полный лог" >&2
+else
+    echo "нет $CURATE — курация пропущена, смотрим полный лог" >&2
+fi
 echo "лог: $LOG  (полный: $RAW)"
 for f in /tmp/proton-"${USER:-armada}"/*.log; do
   [ -e "$f" ] && cp "$f" "$REPO/results/raw/proton-starfield-$MODE-$(basename "$f")"

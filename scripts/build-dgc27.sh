@@ -87,11 +87,13 @@ fi
 
 mkdir -p "$HOSTOUT"
 cp -v "$SO" "$HOSTOUT/libvulkan_freedreno.so"
+# The container only sees /hostout, while the manifest must name the path the
+# host loader reads, so the host passes that path in.
 cat > "$HOSTOUT/freedreno_icd.json" <<EOF
 {
     "file_format_version": "1.0.1",
     "ICD": {
-        "library_path": "/var/home/armada/opencode/build/out-dgc27/libvulkan_freedreno.so",
+        "library_path": "${HOSTOUT_PATH:-$HOSTOUT}/libvulkan_freedreno.so",
         "api_version": "1.4.354",
         "library_arch": "64"
     }

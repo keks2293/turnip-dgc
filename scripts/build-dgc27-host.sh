@@ -36,6 +36,7 @@ exec podman run --rm \
    -v "$OUT":/out:Z \
    -v "$CCACHEDIR":/ccache:Z \
    -v "$HOSTOUT":/hostout:Z \
+   -e HOSTOUT_PATH="$HOSTOUT" \
    -e FRESH="${FRESH:-1}" \
    -e BUILD_JOBS="${BUILD_JOBS:-2}" \
    "$IMAGE" bash /repo/scripts/build-dgc27.sh
