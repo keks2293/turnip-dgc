@@ -14,6 +14,12 @@
  * — красным (связанный по-прежнему зелёный). Правая половина красным рисуется
  * только если драйвер прочитал pNext; иначе обе половины зелёные.
  *
+ * Заодно проба смотрит на то, чем такое поведение разрешено: лимиты
+ * execution set'ов нулевые, ни одна стадия из set'а не биндится, и
+ * vkCreateIndirectExecutionSetEXT отказывает. Без этого «pipeline из pNext»
+ * было бы самодеятельностью драйвера, а не единственным законным состоянием
+ * устройства, которое не принимает токен EXECUTION_SET.
+ *
  * RC: 0 = правая половина красная, 4 = нет, 3 = драйвер не отдал точки входа.
  */
 #include "pcommon.h"
@@ -22,6 +28,7 @@
 #include "fs_red_spv.h"
 
 static PFN_vkCreateIndirectCommandsLayoutEXT pCreateLayout;
+static PFN_vkCreateIndirectExecutionSetEXT pCreateIES;
 static PFN_vkGetGeneratedCommandsMemoryRequirementsEXT pMemReq;
 static PFN_vkCmdExecuteGeneratedCommandsEXT pExecute;
 
@@ -30,10 +37,24 @@ load_dgc(struct env *e)
 {
    pCreateLayout = (PFN_vkCreateIndirectCommandsLayoutEXT)
       vkGetDeviceProcAddr(e->dev, "vkCreateIndirectCommandsLayoutEXT");
+   pCreateIES = (PFN_vkCreateIndirectExecutionSetEXT)
+      vkGetDeviceProcAddr(e->dev, "vkCreateIndirectExecutionSetEXT");
    pMemReq = (PFN_vkGetGeneratedCommandsMemoryRequirementsEXT)
       vkGetDeviceProcAddr(e->dev, "vkGetGeneratedCommandsMemoryRequirementsEXT");
    pExecute = (PFN_vkCmdExecuteGeneratedCommandsEXT)
       vkGetDeviceProcAddr(e->dev, "vkCmdExecuteGeneratedCommandsEXT");
+}
+
+/* Проверка не по пикселям; счётчики общие, чтобы итоговая строка «N checks»
+ * считала всё. */
+static void
+expect(struct env *e, int cond, const char *what)
+{
+   e->checks++;
+   if (!cond) {
+      printf("FAIL %s\n", what);
+      e->fails++;
+   }
 }
 
 /* Два треугольника: левый на вершинах 0..2, правый на 3..5. Порядок вершин
@@ -55,6 +76,23 @@ main(void)
                       "(is the extension advertised?)\n");
       return 3;
    }
+
+   /* Нулевые лимиты — это то, почему pipeline приходится класть в pNext:
+    * execution set устройству не нужен, лимит maxPipelineCount не оставляет
+    * для него законного значения (VUID-...-maxPipelineCount-11018). */
+   VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT dgcp = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT,
+   };
+   VkPhysicalDeviceProperties2 props2 = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+      .pNext = &dgcp,
+   };
+   vkGetPhysicalDeviceProperties2(e.phys, &props2);
+   printf("probe18: maxIndirectPipelineCount=%u maxIndirectShaderObjectCount=%u "
+          "pipelineBinding=%#x shaderBinding=%#x\n",
+          dgcp.maxIndirectPipelineCount, dgcp.maxIndirectShaderObjectCount,
+          dgcp.supportedIndirectCommandsShaderStagesPipelineBinding,
+          dgcp.supportedIndirectCommandsShaderStagesShaderBinding);
 
    buf_create(&e, &e.vbo, &e.vmem, sizeof(g_tris),
               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 1);
@@ -84,6 +122,37 @@ main(void)
    VkPipelineLayout pl;
    VkPipeline p_green = make_pipeline(&e, green, 2, NULL, 0, &pl);
    VkPipeline p_red = make_pipeline(&e, red, 2, NULL, 0, NULL);
+
+   /* Лимиты нулевые, поэтому и создать execution set нельзя. Драйвер обязан
+    * отказать, а не выдать объект, обновлять который бессмысленно. */
+   expect(&e, dgcp.maxIndirectPipelineCount == 0 &&
+               dgcp.maxIndirectShaderObjectCount == 0,
+          "maxIndirect{Pipeline,Shader}ObjectCount are 0");
+   expect(&e, dgcp.supportedIndirectCommandsShaderStagesPipelineBinding == 0 &&
+                  dgcp.supportedIndirectCommandsShaderStagesShaderBinding == 0,
+          "no shader stages bind from an execution set");
+   VkIndirectExecutionSetPipelineInfoEXT ies_pinfo = {
+      .sType = VK_STRUCTURE_TYPE_INDIRECT_EXECUTION_SET_PIPELINE_INFO_EXT,
+      .initialPipeline = p_green,
+      .maxPipelineCount = 1,
+   };
+   VkIndirectExecutionSetInfoEXT ies_info = {.pPipelineInfo = &ies_pinfo};
+   VkIndirectExecutionSetCreateInfoEXT ieci = {
+      .sType = VK_STRUCTURE_TYPE_INDIRECT_EXECUTION_SET_CREATE_INFO_EXT,
+      .type = VK_INDIRECT_EXECUTION_SET_INFO_TYPE_PIPELINES_EXT,
+      .info = ies_info,
+   };
+   VkIndirectExecutionSetEXT ies = VK_NULL_HANDLE;
+   VkResult ies_r = pCreateIES ? pCreateIES(e.dev, &ieci, NULL, &ies)
+                               : VK_ERROR_FEATURE_NOT_PRESENT;
+   expect(&e, ies_r != VK_SUCCESS, "CreateIndirectExecutionSetEXT is refused");
+   if (ies_r == VK_SUCCESS && ies != VK_NULL_HANDLE) {
+      PFN_vkDestroyIndirectExecutionSetEXT pDestroyIES =
+         (PFN_vkDestroyIndirectExecutionSetEXT)
+            vkGetDeviceProcAddr(e.dev, "vkDestroyIndirectExecutionSetEXT");
+      if (pDestroyIES)
+         pDestroyIES(e.dev, ies, NULL);
+   }
 
    VkIndirectCommandsLayoutTokenEXT tok = {
       .sType = VK_STRUCTURE_TYPE_INDIRECT_COMMANDS_LAYOUT_TOKEN_EXT,
