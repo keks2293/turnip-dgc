@@ -21,7 +21,9 @@ set -euo pipefail
 MODE="${1:-patched}"
 TIMEOUT="${2:-0}"
 
-GAME_DIR="/run/media/armada/Z Slim/Games/Starfield.Digital.Premium.Edition-InsaneRamZes"
+# Носитель монтируется по метке, а она менялась ("Z Slim" → "Slim"), так что
+# путь можно переопределить: GAME_DIR=/run/media/.../Games/Starfield... scripts/...
+GAME_DIR="${GAME_DIR:-/run/media/armada/Slim/Games/Starfield.Digital.Premium.Edition-InsaneRamZes}"
 GAME_EXE="$GAME_DIR/Starfield.exe"
 PREFIX="/var/home/armada/Games/Heroic/Prefixes/starfield1716740"
 PROTON="/usr/share/steam/compatibilitytools.d/proton-cachyos-11.0-arm64/proton"
@@ -89,10 +91,18 @@ export VK_LOADER_DEBUG="${VK_LOADER_DEBUG:-error,warn}"
 # Диагностические пасsthrough (dgc-plan §9.9):
 #   VKD3D_DISABLE_EXTENSIONS=VK_EXT_device_generated_commands — A/B без DGC
 #   (vkd3d device.c:202, список через запятую)
-#   DGC_DUMP=1 — дамп DGC-токенов layout'а в stderr (tu_dgc.cc)
+#   VKD3D_FEATURE_LEVEL=12_0 — на голом апстриме (патч 0004 не поднят,
+#   sparseResidencyImage2D=false) vkd3d-proton считает FL из фич и Starfield
+#   не доходит до картинки; 12_0 задаётся явно
+#   TU_DEBUG=dgcdump — дамп сгенерированного PM4-стрима в stderr (turnip).
+#   Осторожно: Starfield гоняет DGC каждый кадр, лог разрастается
 #   MESA_DEBUG=1 — mesa_log-вывод драйвера (в release-сборке vk_errorf
 #   дополнительно требует debug-колбэк — см. dgc-plan §9.9)
-for name in VKD3D_DISABLE_EXTENSIONS MESA_DEBUG DGC_DUMP; do
+#   DRIRC_CONFIGDIR — каталог drirc; заменяет поиск целиком, для DGC это
+#   /tmp/opencode/drirc-dgc-on с tu_enable_device_generated_commands=true
+#   (в /etc/xdg/mesa и ~/.config/mesa своих drirc нет, терять нечего)
+for name in VKD3D_DISABLE_EXTENSIONS VKD3D_FEATURE_LEVEL TU_DEBUG MESA_DEBUG \
+            DRIRC_CONFIGDIR; do
     if [ -n "${!name:-}" ]; then export "$name"; fi
 done
 
@@ -100,6 +110,9 @@ done
   echo "# date: $(date -Is)"
   echo "# mode: $MODE"
   echo "# VK_DRIVER_FILES=${VK_DRIVER_FILES:-<unset>}"
+  echo "# VKD3D_FEATURE_LEVEL=${VKD3D_FEATURE_LEVEL:-<unset>} DRIRC_CONFIGDIR=${DRIRC_CONFIGDIR:-<default>}"
+  [ -n "${VK_DRIVER_FILES:-}" ] && \
+    echo "# driver: $(sha256sum "$(dirname "$VK_DRIVER_FILES")/libvulkan_freedreno.so" 2>/dev/null | cut -c1-16)"
   [ -r "$VKD3D_DLL" ] && \
     echo "# vkd3d-proton: master-сборка $(sha256sum "$VKD3D_DLL" | cut -c1-16) (native-override)" || \
     echo "# vkd3d-proton: из proton-cachyos (без фикса fp16)"

@@ -1,0 +1,2 @@
+# Full run logs stay out of git; the curated ones in results/starfield are it.
+results/raw/
