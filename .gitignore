@@ -1,2 +1,5 @@
-# Full run logs stay out of git; the curated ones in results/starfield are it.
+# Full run logs stay out of git; the curated ones under results/<game> are it.
 results/raw/
+
+# The second-game probe (Avowed) was dropped; its logs stay on disk, untracked.
+results/avowed/
