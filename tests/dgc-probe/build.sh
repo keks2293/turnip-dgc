@@ -14,13 +14,19 @@ cd "$(dirname "$0")"
 
 IMG=${IMG:-localhost/mesa-build-fedora44-wsi-glslang-vulkan}
 VKLIB=${VKLIB:-/usr/lib64/libvulkan.so.1}
-ICD=${ICD:-/var/home/armada/opencode/build/out-dgc27/freedreno_icd.json}
+# ICD по умолчанию — комбинированный драйвер (игровой стек + серия DGC):
+# единственная сборка, на которой имеет смысл проверять DGC. Голую сборку без
+# стека 0001-0014 удалили: на ней vkd3d не поднимает SM 6.6, и прогон ничего
+# не доказывает.
+ICD=${ICD:-/var/home/armada/opencode/build/out-star/freedreno_icd.json}
 POD="podman run --rm -v $PWD:/src:Z"
 
 # probe -> "vert frag comp" shaders it includes (via *_spv.h)
 shaders_for() {
    case "$1" in
       probe0d|probe12|probe13)   echo "vs_full:vert fs_bands:frag" ;;
+      probe17)                   echo "vs_full:vert fs_green:frag" ;;
+      probe18)                   echo "vs_full:vert fs_green:frag fs_red:frag" ;;
       probe14|probe15)             echo "cs_dgc:comp" ;;
       probe16)                     echo "cs_dgc_pc:comp" ;;
       probe_dbg)                 echo "vs_full:vert fs_bands:frag fs_green:frag" ;;
@@ -61,7 +67,7 @@ fi
 
 targets=("$@")
 if [ ${#targets[@]} -eq 0 ]; then
-   targets=(probe0d probe7d probe9 probe10 probe11 probe12 probe13 probe14 probe15 probe16 probe_dbg)
+   targets=(probe0d probe7d probe9 probe10 probe11 probe12 probe13 probe14 probe15 probe16 probe17 probe18 probe_dbg)
 fi
 rc=0
 for p in "${targets[@]}"; do
