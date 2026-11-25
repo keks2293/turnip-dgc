@@ -20,7 +20,6 @@ static const float g_full[3][2] = {
 };
 
 static PFN_vkCreateIndirectCommandsLayoutEXT pCreateLayout;
-static PFN_vkCreateIndirectExecutionSetEXT pCreateIES;
 static PFN_vkGetGeneratedCommandsMemoryRequirementsEXT pMemReq;
 static PFN_vkCmdExecuteGeneratedCommandsEXT pExecute;
 
@@ -29,8 +28,6 @@ load_dgc(struct env *e)
 {
    pCreateLayout = (PFN_vkCreateIndirectCommandsLayoutEXT)
       vkGetDeviceProcAddr(e->dev, "vkCreateIndirectCommandsLayoutEXT");
-   pCreateIES = (PFN_vkCreateIndirectExecutionSetEXT)
-      vkGetDeviceProcAddr(e->dev, "vkCreateIndirectExecutionSetEXT");
    pMemReq = (PFN_vkGetGeneratedCommandsMemoryRequirementsEXT)
       vkGetDeviceProcAddr(e->dev, "vkGetGeneratedCommandsMemoryRequirementsEXT");
    pExecute = (PFN_vkCmdExecuteGeneratedCommandsEXT)
@@ -46,7 +43,7 @@ main(void)
    struct env_ext ext = {.dgc = VK_TRUE};
    env_init_ex(&e, "probe13", &ext);
    load_dgc(&e);
-   if (!pCreateLayout || !pCreateIES || !pMemReq || !pExecute) {
+   if (!pCreateLayout || !pMemReq || !pExecute) {
       fprintf(stderr, "probe13: DGC entry points missing "
                       "(is the extension advertised?)\n");
       return 3;
@@ -92,42 +89,25 @@ main(void)
    VkIndirectCommandsLayoutEXT lay;
    VKCHECK(pCreateLayout(e.dev, &lci, NULL, &lay));
 
-   VkIndirectExecutionSetPipelineInfoEXT pinfo = {
-      .sType = VK_STRUCTURE_TYPE_INDIRECT_EXECUTION_SET_PIPELINE_INFO_EXT,
-      .initialPipeline = pipe,
-      .maxPipelineCount = 1,
+   /* Layout без токена EXECUTION_SET не принимает execution set
+    * (VUID-VkGeneratedCommandsInfoEXT-indirectCommandsLayout-10241), поэтому
+    * pipeline, для которого строятся последовательности, едет в pNext и
+    * запроса требований, и самого execute (-11080). */
+   VkGeneratedCommandsPipelineInfoEXT with_pipe = {
+      .sType = VK_STRUCTURE_TYPE_GENERATED_COMMANDS_PIPELINE_INFO_EXT,
+      .pipeline = pipe,
    };
-   VkIndirectExecutionSetInfoEXT iinfo = {.pPipelineInfo = &pinfo};
-   VkIndirectExecutionSetCreateInfoEXT ieci = {
-      .sType = VK_STRUCTURE_TYPE_INDIRECT_EXECUTION_SET_CREATE_INFO_EXT,
-      .type = VK_INDIRECT_EXECUTION_SET_INFO_TYPE_PIPELINES_EXT,
-      .info = iinfo,
-   };
-   VkIndirectExecutionSetEXT ies;
-   VKCHECK(pCreateIES(e.dev, &ieci, NULL, &ies));
 
-   VkGeneratedCommandsMemoryRequirementsInfoEXT mri = {
-      .sType = VK_STRUCTURE_TYPE_GENERATED_COMMANDS_MEMORY_REQUIREMENTS_INFO_EXT,
-      .indirectExecutionSet = ies,
-      .indirectCommandsLayout = lay,
-      .maxSequenceCount = 1,
-      .maxDrawCount = 1,
-   };
-   VkMemoryRequirements2 mr = {
-      .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
-   };
-   pMemReq(e.dev, &mri, &mr);
-
-   VkDeviceSize pp_size = mr.memoryRequirements.size ? mr.memoryRequirements.size
-                                                     : 256;
+   VkDeviceSize pp_size;
    VkBuffer ppbuf;
    VkDeviceMemory ppmem;
-   VkDeviceAddress pp_va = bda_buffer(&e, &ppbuf, &ppmem, pp_size);
+   VkDeviceAddress pp_va =
+      preprocess_buffer(&e, pMemReq, lay, pipe, 1, &pp_size, &ppbuf, &ppmem);
 
    VkGeneratedCommandsInfoEXT gi = {
       .sType = VK_STRUCTURE_TYPE_GENERATED_COMMANDS_INFO_EXT,
+      .pNext = &with_pipe,
       .shaderStages = VK_SHADER_STAGE_ALL_GRAPHICS,
-      .indirectExecutionSet = ies,
       .indirectCommandsLayout = lay,
       .indirectAddress = seq_va,
       .indirectAddressSize = sizeof(seq),

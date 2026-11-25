@@ -25,7 +25,6 @@
 #define GRID_X 3u
 
 static PFN_vkCreateIndirectCommandsLayoutEXT pCreateLayout;
-static PFN_vkCreateIndirectExecutionSetEXT pCreateIES;
 static PFN_vkGetGeneratedCommandsMemoryRequirementsEXT pMemReq;
 static PFN_vkCmdExecuteGeneratedCommandsEXT pExecute;
 
@@ -34,8 +33,6 @@ load_dgc(struct env *e)
 {
    pCreateLayout = (PFN_vkCreateIndirectCommandsLayoutEXT)
       vkGetDeviceProcAddr(e->dev, "vkCreateIndirectCommandsLayoutEXT");
-   pCreateIES = (PFN_vkCreateIndirectExecutionSetEXT)
-      vkGetDeviceProcAddr(e->dev, "vkCreateIndirectExecutionSetEXT");
    pMemReq = (PFN_vkGetGeneratedCommandsMemoryRequirementsEXT)
       vkGetDeviceProcAddr(e->dev, "vkGetGeneratedCommandsMemoryRequirementsEXT");
    pExecute = (PFN_vkCmdExecuteGeneratedCommandsEXT)
@@ -49,7 +46,7 @@ main(void)
    struct env_ext ext = {.dgc = VK_TRUE};
    env_init_ex(&e, "probe16", &ext);
    load_dgc(&e);
-   if (!pCreateLayout || !pCreateIES || !pMemReq || !pExecute) {
+   if (!pCreateLayout || !pMemReq || !pExecute) {
       fprintf(stderr, "probe16: DGC entry points missing\n");
       return 3;
    }
