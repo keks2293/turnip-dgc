@@ -153,17 +153,32 @@ GPU-связанном режиме `total` меряет не постановк
    таблицы выше. Иначе мы получим полный набор токенов, который медленнее
    цикла vkd3d.
 
-## Explicit preprocess (probe21, 2026-11-26)
+## Explicit preprocess (probe21/probe23, 2026-11-26)
 
-После фикса explicit preprocess (`1d7c83646a3`, `5636aa45f14`, `17be3c1544c`) был добавлен `probe21`: layout с `VK_INDIRECT_COMMANDS_LAYOUT_USAGE_EXPLICIT_PREPROCESS_BIT_EXT`, сравнение `execute(isPreprocessed=false)` на explicit layout, `preprocess once + execute(isPreprocessed=true)`, и manual CPU loop. Тот же tiny GPU-idle режим, A740, `build/out-star`.
+После фикса explicit preprocess (`1d7c83646a3`, `5636aa45f14`, `17be3c1544c`) добавлены probes:
 
-| variant | N | unpre inner/rec/total us | pre inner/rec/total us | manual inner/rec/total us | pre/unpre total | manual/pre total |
-|---|---:|---:|---:|---:|---:|---:|
-| draw | 512 | 2.60 / 6.20 / 874.24 | 1.20 / 4.63 / 379.99 | 15.73 / 19.79 / 193.59 | 0.43x | 0.51x |
-| pc_draw | 512 | 3.33 / 7.60 / 1823.07 | 4.53 / 15.62 / 902.63 | 85.26 / 90.05 / 889.76 | 0.50x | 0.99x |
-| indexed | 512 | 2.34 / 5.68 / 2041.86 | 1.09 / 4.17 / 419.41 | 15.83 / 20.16 / 213.12 | 0.21x | 0.51x |
+- `probe20`: smoke correctness для `EXPLICIT_PREPROCESS_BIT` + `isPreprocessed`.
+- `probe21`: perf compare `unpreprocessed execute` / `preprocess once + preprocessed execute` / manual CPU loop на explicit-preprocess layout.
+- `probe23`: `preprocess once + M preprocessed executes` в одном cmd/RP.
 
-Вывод: preprocessed execute заметно снижает total для DGC, особенно для `pc_draw` (~2x) и `indexed` (~4.9x) на этом probe. Но manual CPU loop всё ещё быстрее по total для tiny draw/indexed и примерно равен для `pc_draw` N=512. Это подтверждает, что основной остаточный cost — fixed/submit/GPU-side DGC execution overhead, а не только CPU preprocess.
+A740, `build/out-star`, tiny GPU-idle, probe21 N=512 median:
+
+| variant | unpre inner/rec/total us | pre inner/rec/total us | manual inner/rec/total us | pre/unpre total | manual/pre total |
+|---|---:|---:|---:|---:|---:|
+| draw | 1.56 / 3.54 / 868.15 | 0.99 / 2.97 / 352.12 | 18.23 / 27.24 / 230.56 | 0.41x | 0.65x |
+| pc_draw | 3.02 / 6.46 / 1787.33 | 0.99 / 3.85 / 364.41 | 79.58 / 83.90 / 448.27 | 0.20x | 1.23x |
+| indexed | 2.03 / 4.74 / 1385.99 | 1.04 / 3.80 / 388.48 | 17.29 / 20.47 / 194.68 | 0.28x | 0.50x |
+
+probe21 fat, N=512 (separate run): `pc_draw` pre total `371.92us` vs manual `449.00us`; `draw`/`indexed` still behind manual total.
+
+probe23, N=512, M=32, preprocess once:
+
+| variant | exec-many inner/total us | per-exec inner/total us |
+|---|---:|---:|
+| draw | 15.99 / 10138.86 | 0.50 / 316.84 |
+| pc_draw | 13.85 / 9867.20 | 0.43 / 308.35 |
+
+Вывод: preprocessed execute убирает большую часть DGC overhead; CPU inner cost амортизируется, но fixed submit/GPU/state/IB overhead остаётся. PC-heavy path выигрывает сильнее всего. Fast path для explicit-preprocess unpreprocessed execute пробовался, но вызывал регресс/краш probe20/probe21 и откачен.
 
 ## Оговорки к цифрам
 
