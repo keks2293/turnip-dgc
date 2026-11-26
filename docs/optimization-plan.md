@@ -22,6 +22,7 @@ Date: 2026-11-26. Context: local `mesa27-star`, probe-only (no game runs). Mesa 
 4. **PC-heavy/generic path** — preprocess shader parallelized.
    - The preprocess shader used to be a single GPU thread looping over every sequence. Since a sequence's stream offset is `i * dwords_per_seq`, `c19a39a73a3` builds one sequence per thread and dispatches `ceil(max_count / 64)` groups; threads past the real `count` (sequenceCountAddress) exit. This is the implicit path vkd3d/Starfield uses.
    - probe21 N=512 total (3 runs): `pc_draw` unpre ~2440 → ~500–600us, `indexed` unpre ~1400–2000 → ~374–655us, `draw` (direct fast path) unchanged. `probe20/22/23` still pass.
+   - The whole-stream CP_NOP prefill is now skipped when it is fully overwritten, but kept for `sequenceCountAddress` (tail) and DISPATCH layouts (the UBO-size dwords are intentionally left as prefilled CP_NOP). Missing the DISPATCH case caused a device-lost in `probe14/16`; the full probe sweep now includes them.
    - Still open: reuse of a preprocessed buffer where the app can, deeper WFI/dispatch reduction only with profile evidence, and GPU-only batching for indexed+IB.
 
 5. **VERTEX_BUFFER / Starfield** — after probe baseline and safe token-mix capture.
