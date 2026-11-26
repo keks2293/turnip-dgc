@@ -161,15 +161,13 @@ GPU-связанном режиме `total` меряет не постановк
 - `probe21`: perf compare `unpreprocessed execute` / `preprocess once + preprocessed execute` / manual CPU loop на explicit-preprocess layout.
 - `probe23`: `preprocess once + M preprocessed executes` в одном cmd/RP.
 
-A740, `build/out-star`, tiny GPU-idle, probe21 N=512 median:
+A740, `build/out-star`, tiny GPU-idle, probe21 N=512 median (2026-11-26, после `d56fa50aaed`):
 
 | variant | unpre inner/rec/total us | pre inner/rec/total us | manual inner/rec/total us | pre/unpre total | manual/pre total |
 |---|---:|---:|---:|---:|---:|
-| draw | 1.56 / 3.54 / 868.15 | 0.99 / 2.97 / 352.12 | 18.23 / 27.24 / 230.56 | 0.41x | 0.65x |
-| pc_draw | 3.02 / 6.46 / 1787.33 | 0.99 / 3.85 / 364.41 | 79.58 / 83.90 / 448.27 | 0.20x | 1.23x |
-| indexed | 2.03 / 4.74 / 1385.99 | 1.04 / 3.80 / 388.48 | 17.29 / 20.47 / 194.68 | 0.28x | 0.50x |
-
-probe21 fat, N=512 (separate run): `pc_draw` pre total `371.92us` vs manual `449.00us`; `draw`/`indexed` still behind manual total.
+| draw | 1.15 / 4.74 / 437.33 | 1.09 / 4.53 / 462.90 | 15.94 / 20.36 / 236.14 | 1.06x | 0.51x |
+| pc_draw | 3.96 / 8.54 / 2459.65 | 1.25 / 4.48 / 365.87 | 107.29 / 115.62 / 651.12 | 0.15x | 1.78x |
+| indexed | 2.92 / 7.40 / 1403.08 | 1.35 / 5.62 / 361.60 | 16.25 / 21.30 / 198.27 | 0.26x | 0.55x |
 
 probe23, N=512, M=32, preprocess once:
 
@@ -178,7 +176,7 @@ probe23, N=512, M=32, preprocess once:
 | draw | 15.99 / 10138.86 | 0.50 / 316.84 |
 | pc_draw | 13.85 / 9867.20 | 0.43 / 308.35 |
 
-Вывод: preprocessed execute убирает большую часть DGC overhead; CPU inner cost амортизируется, но fixed submit/GPU/state/IB overhead остаётся. PC-heavy path выигрывает сильнее всего. Fast path для explicit-preprocess unpreprocessed execute пробовался, но вызывал регресс/краш probe20/probe21 и откачен.
+Вывод: explicit-preprocess unpreprocessed draw-only (no PC/SI/IB) теперь использует direct `CP_DRAW_INDIRECT_MULTI` fast path (`d56fa50aaed`), что убирает preprocess dispatch для этого случая; probe20/probe21/probe22 проходят. PC-heavy/indexed unpre остаются на generic preprocess path. Preprocessed execute сильно снижает overhead, но fixed submit/GPU/state/IB cost остаётся; manual всё ещё быстрее по total для tiny draw/indexed. Probe21 total шумит, для решений нужны повторные прогоны.
 
 ## Оговорки к цифрам
 
