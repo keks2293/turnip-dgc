@@ -30,6 +30,7 @@ shaders_for() {
       probe19)                   echo "vs_full:vert fs_green:frag vs_pc:vert" ;;
       probe20)                   echo "vs_full:vert fs_green:frag" ;;
       probe21)                   echo "vs_full:vert fs_green:frag vs_pc:vert" ;;
+      probe22)                   echo "vs_full:vert fs_green:frag" ;;
       probe14|probe15)             echo "cs_dgc:comp" ;;
       probe16)                     echo "cs_dgc_pc:comp" ;;
       probe_dbg)                 echo "vs_full:vert fs_bands:frag fs_green:frag" ;;
