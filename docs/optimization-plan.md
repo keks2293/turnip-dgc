@@ -53,3 +53,9 @@ Date: 2026-11-26. Context: local `mesa27-star`, probe-only (no game runs). Mesa 
 - Added `dgc/tests/dgc-probe/probe24.c` to measure fixed cost of one more implicit DGC execute in one cmdbuf (M=33, min total). CPU record is ~0-3us (`dgctime`), so fixed cost is GPU/CP.
 - Typical min marginal us/exec: draw N64 ~42-62, pc_draw N64 ~43-46, indexed N64 ~45-56; manual pc_draw N64 ~52, indexed N64 ~16. Draw-only N64 is often limited by CP draw processing; pc/indexed generic path still has large per-execute fixed overhead.
 - `65b71bd6833` reuse of draw state across consecutive implicit DGC executes was correct but gave no stable probe24 win; main remaining fixed cost is preprocess dispatch + `CLEAN|WFI|WFM` barrier + state restore/emit + IB.
+
+## Batching adjacent implicit executes (parked, 2026-11-27)
+
+- Idea: batch consecutive compatible implicit `vkCmdExecuteGeneratedCommandsEXT` calls in the same cmdbuf/RP into one preprocess dispatch + one barrier + one state restore, emitting multiple IB/fast-path draws. Probe24 shows fixed overhead is mostly GPU/CP, so the win is plausible in microbenchmarks.
+- Status: **parked / not worth implementing now**. Each execute has its own layout, sequence/count/preprocess addresses, execution set/pipeline, stride/count and can be separated by arbitrary state/barrier commands; compatible long runs are unlikely in real games. RADV optimizes inside one execute (preamble/IB chaining) and ANV uses preprocess+jump-to-prepared batch; neither shows adjacent-execute batching as a generic path.
+- Revisit only if a real Starfield/game trace shows long runs of compatible adjacent executes with no intervening state/barriers.
