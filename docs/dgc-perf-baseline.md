@@ -153,6 +153,18 @@ GPU-связанном режиме `total` меряет не постановк
    таблицы выше. Иначе мы получим полный набор токенов, который медленнее
    цикла vkd3d.
 
+## Explicit preprocess (probe21, 2026-11-26)
+
+После фикса explicit preprocess (`1d7c83646a3`, `5636aa45f14`, `17be3c1544c`) был добавлен `probe21`: layout с `VK_INDIRECT_COMMANDS_LAYOUT_USAGE_EXPLICIT_PREPROCESS_BIT_EXT`, сравнение `execute(isPreprocessed=false)` на explicit layout, `preprocess once + execute(isPreprocessed=true)`, и manual CPU loop. Тот же tiny GPU-idle режим, A740, `build/out-star`.
+
+| variant | N | unpre inner/rec/total us | pre inner/rec/total us | manual inner/rec/total us | pre/unpre total | manual/pre total |
+|---|---:|---:|---:|---:|---:|---:|
+| draw | 512 | 2.60 / 6.20 / 874.24 | 1.20 / 4.63 / 379.99 | 15.73 / 19.79 / 193.59 | 0.43x | 0.51x |
+| pc_draw | 512 | 3.33 / 7.60 / 1823.07 | 4.53 / 15.62 / 902.63 | 85.26 / 90.05 / 889.76 | 0.50x | 0.99x |
+| indexed | 512 | 2.34 / 5.68 / 2041.86 | 1.09 / 4.17 / 419.41 | 15.83 / 20.16 / 213.12 | 0.21x | 0.51x |
+
+Вывод: preprocessed execute заметно снижает total для DGC, особенно для `pc_draw` (~2x) и `indexed` (~4.9x) на этом probe. Но manual CPU loop всё ещё быстрее по total для tiny draw/indexed и примерно равен для `pc_draw` N=512. Это подтверждает, что основной остаточный cost — fixed/submit/GPU-side DGC execution overhead, а не только CPU preprocess.
+
 ## Оговорки к цифрам
 
 * Пробы — нативные aarch64. В игре вызовы vkd3d идут через wine + FEX, то
