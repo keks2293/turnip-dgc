@@ -19,8 +19,10 @@ Date: 2026-11-26. Context: local `mesa27-star`, probe-only (no game runs). Mesa 
    - `d56fa50aaed` enables direct `CP_DRAW_INDIRECT_MULTI` for explicit-preprocess unpreprocessed draw-only layouts (no PC/SI/IB), excluding preprocess-only recording.
    - TODO: GPU-only indexed batching/IB handling for unpre indexed+IB, validate differing IB/stride/offset/limits, reduce per-run CPU overhead/state checks.
 
-4. **PC-heavy/generic path** — pending profile after p.2/p.3.
-   - Main expected win is reuse of preprocessed buffer. Consider WFI/dispatch overhead reduction only with profile evidence and const-state correctness checks.
+4. **PC-heavy/generic path** — preprocess shader parallelized.
+   - The preprocess shader used to be a single GPU thread looping over every sequence. Since a sequence's stream offset is `i * dwords_per_seq`, `c19a39a73a3` builds one sequence per thread and dispatches `ceil(max_count / 64)` groups; threads past the real `count` (sequenceCountAddress) exit. This is the implicit path vkd3d/Starfield uses.
+   - probe21 N=512 total (3 runs): `pc_draw` unpre ~2440 → ~500–600us, `indexed` unpre ~1400–2000 → ~374–655us, `draw` (direct fast path) unchanged. `probe20/22/23` still pass.
+   - Still open: reuse of a preprocessed buffer where the app can, deeper WFI/dispatch reduction only with profile evidence, and GPU-only batching for indexed+IB.
 
 5. **VERTEX_BUFFER / Starfield** — after probe baseline and safe token-mix capture.
    - `VERTEX_BUFFER` still not implemented; Starfield token mix unknown (no game runs now).

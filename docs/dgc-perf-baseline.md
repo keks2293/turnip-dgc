@@ -178,6 +178,37 @@ probe23, N=512, M=32, preprocess once:
 
 Вывод: explicit-preprocess unpreprocessed draw-only (no PC/SI/IB) теперь использует direct `CP_DRAW_INDIRECT_MULTI` fast path (`d56fa50aaed`), что убирает preprocess dispatch для этого случая; probe20/probe21/probe22 проходят. PC-heavy/indexed unpre остаются на generic preprocess path. Preprocessed execute сильно снижает overhead, но fixed submit/GPU/state/IB cost остаётся; manual всё ещё быстрее по total для tiny draw/indexed. Probe21 total шумит, для решений нужны повторные прогоны.
 
+## Параллельный preprocess (probe21, 2026-11-26, `c19a39a73a3`)
+
+До этой правки preprocess-шейдер был одним GPU-потоком (`1x1x1`, один
+workgroup), который последовательно писал все последовательности в stream.
+Стоимость generic-пути росла линейно по N в одном lane, и именно она делала
+`indexed`/`pc_draw` `unpreprocessed execute` такими дорогими. Так как
+последовательность всегда занимает `dwords_per_seq` двopдов, её смещение —
+`i * dwords_per_seq`, и последовательности независимы.
+
+Теперь шейдер строит одну последовательность на поток, grid —
+`ceil(max_count / DGC_PREPROCESS_WORKGROUP)` групп; потоки за пределами
+реального `count` (случай `sequenceCountAddress`) сразу выходят. Записи
+остаются непересекающимися и совпадают с раскладкой последовательного
+накопления.
+
+probe21, N=512, три прогона (total шумит, поэтому диапазон), мкс:
+
+| variant | unpre total до | unpre total после | preprocessed total |
+|---|---:|---:|---:|
+| draw | ~420–440 | ~320–442 | ~346–481 |
+| pc_draw | ~2440–2460 | ~498–597 | ~474–591 |
+| indexed | ~1400–2000 | ~374–655 | ~353–397 |
+
+`draw` уже шёл direct fast path и почти не изменился; `pc_draw`/`indexed`,
+которые действительно идут через preprocess-шейдер, ускорились в ~4x по total
+и заметно по `inner` (`indexed` inner 2.9 → ~2.4–2.6, `pc_draw` inner ~4 → ~2).
+Это ровно тот путь, которым vkd3d/Starfield исполняет `ExecuteIndirect` без
+explicit preprocess, поэтому выигрыш прикладной, а не только probe-ный.
+
+probe20/probe22/probe23 после правки проходят.
+
 ## Оговорки к цифрам
 
 * Пробы — нативные aarch64. В игре вызовы vkd3d идут через wine + FEX, то
