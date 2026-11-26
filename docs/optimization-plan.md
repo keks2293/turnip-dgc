@@ -14,9 +14,10 @@ Date: 2026-11-26. Context: local `mesa27-star`, probe-only (no game runs). Mesa 
    - `probe21` (explicit-preprocess layout, A740, tiny triangle, N=512 median): `draw` unpre 874us total / pre 380us; `pc_draw` unpre 1823us / pre 903us; `indexed` unpre 2042us / pre 419us. Manual CPU loop remains lower total at N=512 in this tiny GPU-idle case (`draw` 194us, `pc_draw` 890us, `indexed` 213us).
    - Interpretation: preprocessed execute removes much DGC overhead, but CPU-recorded manual loop is still competitive/faster for tiny draws; PC-heavy case benefits most and approaches manual total at N=512. Needs confirmation with larger GPU workload/fat mode and real token mixes.
 
-3. **Indexed+IB DGC fast path** — partially done.
-   - Batching by identical IB/size/format is implemented. `sequenceCountAddress` is supported when count BO is CPU-mapped (reads count, clamps to max, falls back to generic path when count/seq BO unavailable). `probe22` covers sequenceCountAddress correctness for draw/indexed fast paths.
-   - TODO: validate differing IB/stride/offset/limits, reduce per-run CPU overhead/state checks, support indirect count in fast path without CPU-mapped count BO if profitable.
+3. **Indexed+IB DGC fast path** — GPU-only path.
+   - CPU-read indexed+IB fast path removed (`9147a4aaca2`) to avoid CPU mapping/fallback dependencies. Indexed+IB layouts use generic GPU preprocess path; `probe22` still passes for sequenceCountAddress correctness.
+   - `d56fa50aaed` enables direct `CP_DRAW_INDIRECT_MULTI` for explicit-preprocess unpreprocessed draw-only layouts (no PC/SI/IB), excluding preprocess-only recording.
+   - TODO: GPU-only indexed batching/IB handling for unpre indexed+IB, validate differing IB/stride/offset/limits, reduce per-run CPU overhead/state checks.
 
 4. **PC-heavy/generic path** — pending profile after p.2/p.3.
    - Main expected win is reuse of preprocessed buffer. Consider WFI/dispatch overhead reduction only with profile evidence and const-state correctness checks.
