@@ -159,7 +159,10 @@ int main(void)
    VkPipelineLayout pl_plain,pl_pc; VkPipeline pipe_plain=make_pipeline_ex(&e,st_plain,2,NULL,0,NULL,&pl_plain);
    VkPipeline pipe_pc=make_pipeline_ex(&e,st_pc,2,NULL,0,&pcr,&pl_pc);
 
-   float verts[3][2]={{-0.008f,0.008f},{0.008f,0.008f},{0.0f,-0.016f}};
+   const int fat = getenv("PROBE21_FILL") && !strcmp(getenv("PROBE21_FILL"), "fat");
+   float verts[3][2];
+   if (fat) { verts[0][0]=-1;verts[0][1]=-1; verts[1][0]=-1;verts[1][1]=3; verts[2][0]=3;verts[2][1]=-1; }
+   else { verts[0][0]=-0.008f;verts[0][1]=0.008f; verts[1][0]=0.008f;verts[1][1]=0.008f; verts[2][0]=0.0f;verts[2][1]=-0.016f; }
    buf_create(&e,&e.vbo,&e.vmem,sizeof(verts),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,1); buf_write(&e,e.vmem,verts,sizeof(verts));
    uint16_t ib[16]={0,1,2}; VkBuffer ibo; VkDeviceMemory ibom; bda_usage_buffer(&e,&ibo,&ibom,sizeof(ib),VK_BUFFER_USAGE_INDEX_BUFFER_BIT); buf_write(&e,ibom,ib,sizeof(ib));
    VkBufferDeviceAddressInfo ibai={.sType=VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,.buffer=ibo}; VkDeviceAddress ib_va=vkGetBufferDeviceAddress(e.dev,&ibai);
