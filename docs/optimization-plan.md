@@ -48,6 +48,16 @@ Date: 2026-11-26. Context: local `mesa27-star`, probe-only (no game runs). Mesa 
 - Reasoning: `CP_WAIT_MEM_WRITES` waits for CP-side memory writes (pipe reg / MEM_WRITE-query style path), but DGC preprocess writes the command stream via shader global stores and CP fetches it as `CP_INDIRECT_BUFFER`; shader-store-to-CP-IB visibility is not covered by `WAIT_MEM_WRITES`. WFI remains required until an A6xx/A7xx-hardware-valid lighter sequence is proven by stress runs.
 - Not tried yet as proven replacement: any `CACHE_FLUSH_TS`/event+wait variant or driver-specific A7xx sequence; any such attempt needs many iterations of probe9-17,19-24 and stress runs (sequenceCountAddress, dispatch, preprocessed/implicit, RP and non-RP).
 
+## Stream tail for dynamic count (A740, 2026-11-27)
+
+- The stream is one `CP_INDIRECT_BUFFER` of `max_count * dwords_per_seq` dwords, so the slots past the real `count` are fetched and parsed like the ones before them and must stay valid PM4. The preprocess shader used to write one `CP_NOP` per tail dword; with a small dynamic count and a large `maxSequenceCount` that is a store per dword.
+- Tried the radv/anv-style dynamic IB size first (patch the `CP_INDIRECT_BUFFER` size field at execute time):
+  - Attempt 1 wrote the size from the preprocess shader into a `sub_cs` dword and copied it into the CS packet with `CP_MEM_TO_MEM`. `probe22` indexed device-lost: `cmd->cs`/`draw_cs` are IB1 BOs and `sub_cs` allocations are `TU_BO_ALLOC_GPU_READ_ONLY` unless `tu_cs_set_writeable()`, so a GPU write to them faults. `probe22` draw/count passed only because it takes the `CP_DRAW_INDIRECT_MULTI` fast path, where no preprocess runs.
+  - Attempt 2, after dropping the patch, still device-lost and exposed a real bug in the tail header: a type-7 header is `count | (parity << 15) | (opcode << 16) | (parity(opcode) << 23)`, so `nop_dw + (len << 16)` overwrites the opcode. The kernel logged `CP | opcode error`. Building `pm4_pkt7_hdr(CP_NOP, len)` in NIR (length in bits 0..13 plus odd parity in bit 15) fixed it.
+  - Even with writeable BOs (`tu_cs_set_writeable()` is the supported mechanism, used for simultaneous-use patchpoints), patching a packet in the CS being executed races with IB2 prefetch: `crashdec-prefetch.c` documents the ROQ prefetching across IB1 `CP_INDIRECT_BUFFER` targets. The gain is also tiny once the tail is a few big NOPs, so this stays unproven/not used.
+- Implemented the radv `dgc_emit_padding` shape instead: only the thread `i == count` covers the whole tail with chunked `CP_NOP` packets (up to `0x3FFF` payload dwords each), so tail stores are `ceil(tail_dw / 0x4000)`. When `count == max_count` there is no tail and the branch is not taken.
+- `probe25` (`maxSequenceCount=8192`, `count=0` and `count=2`) validates the multi-chunk tail; `probe9-17,19-25` pass and `probe24` is unchanged (its `count == max` case has no tail).
+
 ## Marginal execute cost (probe24, A740, 2026-11-27)
 
 - Added `dgc/tests/dgc-probe/probe24.c` to measure fixed cost of one more implicit DGC execute in one cmdbuf (M=33, min total). CPU record is ~0-3us (`dgctime`), so fixed cost is GPU/CP.
