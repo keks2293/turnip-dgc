@@ -143,6 +143,8 @@ fi
 # Optional vkd3d-proton DLL override. No game-dir copy.
 VKD3D_OVERRIDE=""
 VKD3D_OVERRIDE_DLLS=""
+VKD3D_OVERRIDE_BACKUP=()
+VKD3D_OVERRIDE_TARGETS=()
 if [ -n "$DLL" ]; then
   [ -e "$DLL" ] || { echo "--dll path not found: $DLL" >&2; exit 1; }
   DLL="$(realpath "$DLL")"
@@ -151,14 +153,51 @@ if [ -n "$DLL" ]; then
   else
     VKD3D_OVERRIDE="$(dirname "$DLL")"
   fi
-  # Override only DLLs present in the override dir; keep names explicit.
   for n in d3d12 d3d12core; do
     if [ -r "$VKD3D_OVERRIDE/$n.dll" ]; then
       VKD3D_OVERRIDE_DLLS="${VKD3D_OVERRIDE_DLLS:+$VKD3D_OVERRIDE_DLLS;}$n=n"
     fi
   done
   [ -n "$VKD3D_OVERRIDE_DLLS" ] || { echo "no d3d12.dll/d3d12core.dll found in $VKD3D_OVERRIDE" >&2; exit 1; }
-  export WINEDLLPATH="$VKD3D_OVERRIDE${WINEDLLPATH:+:$WINEDLLPATH}"
+
+  # Proton overwrites prefix d3d12/d3d12core from its own files on startup.
+  # Use a private Proton copy with overridden vkd3d-proton DLLs. No game-dir changes.
+  PROTON_BASE="$PROTON"
+  PROTON_BASE_DIR="$(dirname "$PROTON_BASE")"
+  PROTON_OVERRIDE_ROOT="$REPO/../build/proton-overrides"
+  PROTON_TAG="$(basename "$PROTON_BASE_DIR")-dgc-$(sha256sum "$VKD3D_OVERRIDE/d3d12core.dll" "$VKD3D_OVERRIDE/d3d12.dll" 2>/dev/null | sha256sum | cut -c1-12)"
+  PROTON="$PROTON_OVERRIDE_ROOT/$PROTON_TAG/proton"
+  if [ ! -x "$PROTON" ]; then
+    mkdir -p "$PROTON_OVERRIDE_ROOT"
+    cp -a "$PROTON_BASE_DIR" "$PROTON_OVERRIDE_ROOT/$PROTON_TAG"
+    chmod -R u+w "$PROTON_OVERRIDE_ROOT/$PROTON_TAG"
+    # arm64 Proton host arch is aarch64-windows; Teardown may load x64/wow64.
+    # Override all vkd3d-proton PE arch dirs that can be used by this Proton.
+    for arch in x86_64-windows aarch64-windows; do
+      dstroot="$PROTON_OVERRIDE_ROOT/$PROTON_TAG/files/lib/wine/vkd3d-proton/$arch"
+      mkdir -p "$dstroot"
+      [ -r "$VKD3D_OVERRIDE/d3d12.dll" ] && cp -f "$VKD3D_OVERRIDE/d3d12.dll" "$dstroot/d3d12.dll"
+      [ -r "$VKD3D_OVERRIDE/d3d12core.dll" ] && cp -f "$VKD3D_OVERRIDE/d3d12core.dll" "$dstroot/d3d12core.dll"
+    done
+  fi
+
+  # Existing prefix may already contain old DLLs; replace and restore on cleanup.
+  PREFIX_PFX="$PREFIX/pfx"
+  for n in d3d12 d3d12core; do
+    src="$VKD3D_OVERRIDE/$n.dll"
+    [ -r "$src" ] || continue
+    for sysdir in "$PREFIX_PFX/drive_c/windows/system32" "$PREFIX_PFX/drive_c/windows/syswow64"; do
+      [ -d "$sysdir" ] || continue
+      dst="$sysdir/$n.dll"
+      if [ -e "$dst" ]; then
+        bak="$dst.dgc-bak.$$"
+        cp -a "$dst" "$bak"
+        VKD3D_OVERRIDE_BACKUP+=("$bak::$dst")
+      fi
+      cp -f "$src" "$dst"
+      VKD3D_OVERRIDE_TARGETS+=("$dst")
+    done
+  done
   export WINEDLLOVERRIDES="$VKD3D_OVERRIDE_DLLS${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
 fi
 
@@ -250,10 +289,51 @@ cleanup_prefix() {
   fi
   pkill -f "wineserver.*${PREFIX}" 2>/dev/null || true
   pgrep -x "$EXE_NAME" >/dev/null 2>&1 && pkill -9 -x "$EXE_NAME" 2>/dev/null || true
+  if [ "${#VKD3D_OVERRIDE_BACKUP[@]}" -gt 0 ]; then
+    for entry in "${VKD3D_OVERRIDE_BACKUP[@]}"; do
+      bak="${entry%%::*}"
+      dst="${entry#*::}"
+      [ -r "$bak" ] && mv -f "$bak" "$dst" || true
+    done
+  fi
+  if [ "${#VKD3D_OVERRIDE_TARGETS[@]}" -gt 0 ]; then
+    for dst in "${VKD3D_OVERRIDE_TARGETS[@]}"; do
+      case "$dst" in *.dgc-bak.*) continue ;; esac
+      found=0
+      if [ "${#VKD3D_OVERRIDE_BACKUP[@]}" -gt 0 ]; then
+        for entry in "${VKD3D_OVERRIDE_BACKUP[@]}"; do
+          [ "${entry#*::}" = "$dst" ] && found=1 && break
+        done
+      fi
+      [ "$found" -eq 0 ] && rm -f "$dst" || true
+    done
+  fi
+  return 0
 }
 
 cleanup_prefix
 sleep 1
+# Re-apply prefix DLL override after initial cleanup (cleanup restores backups).
+if [ -n "${VKD3D_OVERRIDE:-}" ]; then
+  VKD3D_OVERRIDE_BACKUP=()
+  VKD3D_OVERRIDE_TARGETS=()
+  PREFIX_PFX="$PREFIX/pfx"
+  for n in d3d12 d3d12core; do
+    src="$VKD3D_OVERRIDE/$n.dll"
+    [ -r "$src" ] || continue
+    for sysdir in "$PREFIX_PFX/drive_c/windows/system32" "$PREFIX_PFX/drive_c/windows/syswow64"; do
+      [ -d "$sysdir" ] || continue
+      dst="$sysdir/$n.dll"
+      if [ -e "$dst" ]; then
+        bak="$dst.dgc-bak.$$"
+        cp -a "$dst" "$bak"
+        VKD3D_OVERRIDE_BACKUP+=("$bak::$dst")
+      fi
+      cp -f "$src" "$dst"
+      VKD3D_OVERRIDE_TARGETS+=("$dst")
+    done
+  done
+fi
 trap cleanup_prefix EXIT INT TERM
 
 cd "$GAME_DIR"
@@ -262,13 +342,14 @@ read -r -a EXTRA <<< "$GAMEARGS"
 if [ "$TIMEOUT" -gt 0 ] 2>/dev/null; then
   timeout --foreground --signal=INT "$TIMEOUT" \
     ${LAUNCH_PREFIX[@]+"${LAUNCH_PREFIX[@]}"} "$PROTON" waitforexitandrun "$EXE" ${EXTRA[@]+"${EXTRA[@]}"} >>"$RAW" 2>&1
+  RC=$?
 else
   ${LAUNCH_PREFIX[@]+"${LAUNCH_PREFIX[@]}"} "$PROTON" waitforexitandrun "$EXE" ${EXTRA[@]+"${EXTRA[@]}"} >>"$RAW" 2>&1
+  RC=$?
 fi
-RC=$?
 set -e
 
-cleanup_prefix
+cleanup_prefix || true
 
 echo "exit: $RC"
 if [ -r "$CURATE" ]; then
@@ -278,6 +359,6 @@ else
 fi
 echo "log: $LOG  (raw: $RAW)"
 for f in /tmp/proton-"${USER:-armada}"/*.log; do
-  [ -e "$f" ] && cp "$f" "$REPO/results/raw/proton-$TAG-$MODE-$(basename "$f")"
+  [ -e "$f" ] && cp "$f" "$REPO/results/raw/proton-$TAG-$MODE-$TS-$(basename "$f")" || true
 done
 exit "$RC"
