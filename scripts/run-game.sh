@@ -152,9 +152,9 @@ if [ -n "$DLL" ]; then
     VKD3D_OVERRIDE="$(dirname "$DLL")"
   fi
   # Override only DLLs present in the override dir; keep names explicit.
-  for n in d3d12.dll d3d12core.dll; do
-    if [ -r "$VKD3D_OVERRIDE/$n" ]; then
-      VKD3D_OVERRIDE_DLLS="${VKD3D_OVERRIDE_DLLS:+$VKD3D_OVERRIDE_DLLS,}$n=n"
+  for n in d3d12 d3d12core; do
+    if [ -r "$VKD3D_OVERRIDE/$n.dll" ]; then
+      VKD3D_OVERRIDE_DLLS="${VKD3D_OVERRIDE_DLLS:+$VKD3D_OVERRIDE_DLLS;}$n=n"
     fi
   done
   [ -n "$VKD3D_OVERRIDE_DLLS" ] || { echo "no d3d12.dll/d3d12core.dll found in $VKD3D_OVERRIDE" >&2; exit 1; }
