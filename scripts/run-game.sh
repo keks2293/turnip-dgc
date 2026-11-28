@@ -171,32 +171,52 @@ if [ -n "$DLL" ]; then
     mkdir -p "$PROTON_OVERRIDE_ROOT"
     cp -a "$PROTON_BASE_DIR" "$PROTON_OVERRIDE_ROOT/$PROTON_TAG"
     chmod -R u+w "$PROTON_OVERRIDE_ROOT/$PROTON_TAG"
-    # arm64 Proton host arch is aarch64-windows; Teardown may load x64/wow64.
-    # Override all vkd3d-proton PE arch dirs that can be used by this Proton.
-    for arch in x86_64-windows aarch64-windows; do
-      dstroot="$PROTON_OVERRIDE_ROOT/$PROTON_TAG/files/lib/wine/vkd3d-proton/$arch"
-      mkdir -p "$dstroot"
-      [ -r "$VKD3D_OVERRIDE/d3d12.dll" ] && cp -f "$VKD3D_OVERRIDE/d3d12.dll" "$dstroot/d3d12.dll"
-      [ -r "$VKD3D_OVERRIDE/d3d12core.dll" ] && cp -f "$VKD3D_OVERRIDE/d3d12core.dll" "$dstroot/d3d12core.dll"
+    # Override only matching-arch vkd3d-proton dirs. Do not put x64 DLLs into
+    # aarch64/i386 slots; arm64 Proton copies host/wow64 arch into prefix.
+    for arch in x86_64-windows aarch64-windows i386-windows; do
+      for sub in "files/lib/wine/vkd3d-proton/$arch" "files/lib/wine/$arch"; do
+        dstroot="$PROTON_OVERRIDE_ROOT/$PROTON_TAG/$sub"
+        [ -d "$dstroot" ] || continue
+        for n in d3d12 d3d12core; do
+          src="$VKD3D_OVERRIDE/$n.dll"
+          dst="$dstroot/$n.dll"
+          [ -r "$src" ] || continue
+          [ -e "$dst" ] || continue
+          srcarch="$(file -b "$src" 2>/dev/null || true)"
+          dstarch="$(file -b "$dst" 2>/dev/null || true)"
+          srcarm64x=0; python3 -c 'import struct,sys; b=open(sys.argv[1],"rb").read(); pe=struct.unpack_from("<I",b,0x3c)[0]; nsec=struct.unpack_from("<H",b,pe+6)[0]; sh=pe+24+struct.unpack_from("<H",b,pe+20)[0]; secs=[b[sh+i*40:sh+i*40+8].rstrip(b"\0") for i in range(nsec)]; sys.exit(0 if (b".a64xrm" in secs or b".hybmp$x" in secs) else 1)' "$src" 2>/dev/null && srcarm64x=1 || true
+          case "$arch" in
+            x86_64-windows)  [[ "$srcarch" == *x86-64* ]] && [ "$srcarm64x" -eq 0 ] && cp -f "$src" "$dst" ;;
+            aarch64-windows) [[ "$srcarch" == *ARM64* || "$srcarch" == *Aarch64* || "$srcarm64x" -eq 1 ]] && cp -f "$src" "$dst" ;;
+            i386-windows)    [[ "$srcarch" == *"Intel i386"* || "$srcarch" == *80386* ]] && cp -f "$src" "$dst" ;;
+          esac
+        done
+      done
     done
   fi
 
-  # Existing prefix may already contain old DLLs; replace and restore on cleanup.
+  # Existing prefix may already contain old DLLs; replace matching-arch files and restore on cleanup.
   PREFIX_PFX="$PREFIX/pfx"
   for n in d3d12 d3d12core; do
     src="$VKD3D_OVERRIDE/$n.dll"
     [ -r "$src" ] || continue
-    for sysdir in "$PREFIX_PFX/drive_c/windows/system32" "$PREFIX_PFX/drive_c/windows/syswow64"; do
-      [ -d "$sysdir" ] || continue
-      dst="$sysdir/$n.dll"
-      if [ -e "$dst" ]; then
-        bak="$dst.dgc-bak.$$"
-        cp -a "$dst" "$bak"
-        VKD3D_OVERRIDE_BACKUP+=("$bak::$dst")
-      fi
+    srcarch="$(file -b "$src" 2>/dev/null || true)"
+    while IFS= read -r -d '' dst; do
+      dstarch="$(file -b "$dst" 2>/dev/null || true)"
+      srcarm64x=0; python3 -c 'import struct,sys; b=open(sys.argv[1],"rb").read(); pe=struct.unpack_from("<I",b,0x3c)[0]; nsec=struct.unpack_from("<H",b,pe+6)[0]; sh=pe+24+struct.unpack_from("<H",b,pe+20)[0]; secs=[b[sh+i*40:sh+i*40+8].rstrip(b"\0") for i in range(nsec)]; sys.exit(0 if (b".a64xrm" in secs or b".hybmp$x" in secs) else 1)' "$src" 2>/dev/null && srcarm64x=1 || true
+      match=0
+      case "$dstarch" in
+        *x86-64*) [[ "$srcarch" == *x86-64* ]] && [ "$srcarm64x" -eq 0 ] && match=1 ;;
+        *ARM64*|*Aarch64*) [[ "$srcarch" == *ARM64* || "$srcarch" == *Aarch64* || "$srcarm64x" -eq 1 ]] && match=1 ;;
+        *Intel\ i386*|*80386*) [[ "$srcarch" == *"Intel i386"* || "$srcarch" == *80386* ]] && match=1 ;;
+      esac
+      [ "$match" -eq 1 ] || continue
+      bak="$dst.dgc-bak.$$"
+      cp -a "$dst" "$bak"
+      VKD3D_OVERRIDE_BACKUP+=("$bak::$dst")
       cp -f "$src" "$dst"
       VKD3D_OVERRIDE_TARGETS+=("$dst")
-    done
+    done < <(find "$PREFIX_PFX/drive_c/windows" -type f -iname "$n.dll" -not -name '*.dgc-bak.*' -print0 2>/dev/null)
   done
   export WINEDLLOVERRIDES="$VKD3D_OVERRIDE_DLLS${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
 fi
